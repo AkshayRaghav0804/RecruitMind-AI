@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RecruitMind-AI</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background:#fafafa; }
+  .brand-grad { background: linear-gradient(90deg,#22c55e,#4ade80); }
+  .drop-active { border-color:#22c55e !important; background:#f0fdf4; }
+</style>
+</head>
+<body class="text-slate-800">
+
+<header class="brand-grad text-white shadow">
+  <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="text-3xl">🧠</div>
+      <div>
+        <div class="text-2xl font-bold leading-tight">RecruitMind-AI</div>
+        <div class="text-xs opacity-90">Intelligent Resume Screening</div>
+      </div>
+    </div>
+    <div class="text-sm opacity-90">Resume screening &amp; candidate matching</div>
+  </div>
+</header>
+
+<main class="max-w-6xl mx-auto px-6 py-10">
+  <section class="text-center mb-8">
+    <h1 class="text-3xl font-bold">RecruitMind Hiring Assistant</h1>
+    <p class="text-slate-500 mt-2">Upload resumes, define a role, and get ranked, explainable candidate matches.</p>
+    <div id="status" class="inline-flex gap-4 text-xs bg-green-50 rounded px-4 py-2 mt-4"></div>
+  </section>
+
+  <!-- Upload -->
+  <section class="bg-white border rounded-lg p-6 mb-8">
+    <h2 class="text-lg font-semibold mb-4">⬆ Upload Resumes</h2>
+    <div id="drop" class="border-2 border-dashed rounded-lg py-10 text-center cursor-pointer">
+      <div class="text-4xl mb-2">📄</div>
+      <div class="font-semibold">Drop resume PDFs here or click to browse</div>
+      <div class="text-sm text-slate-500 mt-1">Text-based PDF resumes · multiple files allowed</div>
+      <button class="mt-4 bg-green-500 hover:bg-green-600 text-white text-sm font-semibold px-5 py-2 rounded">Choose PDF Files</button>
+      <div class="text-xs text-slate-400 mt-3">Supported format: PDF (max 10MB each)</div>
+      <input id="file" type="file" accept="application/pdf" multiple class="hidden">
+    </div>
+    <div id="uploadMsg" class="text-sm mt-3"></div>
+  </section>
+
+  <!-- Candidates -->
+  <section class="mb-8">
+    <h2 class="text-xl font-semibold mb-3">Candidates <span id="candCount" class="text-slate-400 text-base"></span></h2>
+    <div id="candidates" class="grid md:grid-cols-3 gap-3"></div>
+  </section>
+
+  <!-- Jobs -->
+  <section class="grid md:grid-cols-2 gap-6 mb-8">
+    <div class="bg-white border rounded-lg p-6">
+      <h2 class="text-lg font-semibold mb-4">💼 New Job Opening</h2>
+      <input id="jTitle" placeholder="Job title (e.g. Senior Python Developer)" class="w-full border rounded px-3 py-2 mb-3 text-sm">
+      <textarea id="jDesc" rows="5" placeholder="Paste the job description…" class="w-full border rounded px-3 py-2 mb-3 text-sm"></textarea>
+      <input id="jSkills" placeholder="Required skills, comma-separated (optional — auto-detected)" class="w-full border rounded px-3 py-2 mb-3 text-sm">
+      <div class="flex items-center gap-3">
+        <input id="jExp" type="number" min="0" step="0.5" placeholder="Min years" class="w-28 border rounded px-3 py-2 text-sm">
+        <button id="jSave" class="bg-green-500 hover:bg-green-600 text-white text-sm font-semibold px-5 py-2 rounded">Create Job</button>
+      </div>
+    </div>
+    <div class="bg-white border rounded-lg p-6">
+      <h2 class="text-lg font-semibold mb-4">Your Jobs</h2>
+      <div id="jobs" class="space-y-2"></div>
+    </div>
+  </section>
+
+  <!-- Matches + assistant -->
+  <section id="matchSection" class="hidden">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-xl font-semibold">Ranked Matches: <span id="matchJob" class="text-green-600"></span></h2>
+      <button id="runMatch" class="bg-green-500 hover:bg-green-600 text-white text-sm font-semibold px-5 py-2 rounded">Run Matching</button>
+    </div>
+    <div class="grid lg:grid-cols-3 gap-6">
+      <div id="matches" class="lg:col-span-2 space-y-3"></div>
+      <div class="bg-white border rounded-lg p-5 h-fit">
+        <h3 class="font-semibold mb-1">🤖 Recruiter Assistant</h3>
+        <p id="ctx" class="text-xs text-slate-500 mb-3">Ask about the selected job and candidate.</p>
+        <div id="chatLog" class="space-y-2 text-sm max-h-72 overflow-y-auto mb-3"></div>
+        <div class="flex gap-2">
+          <input id="q" placeholder="e.g. What are this candidate's gaps?" class="flex-1 border rounded px-3 py-2 text-sm">
+          <button id="ask" class="bg-green-500 text-white text-sm px-4 rounded">Ask</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="text-xs text-slate-400 text-center mt-12">
+    Scores are decision support, not decisions. Always have a human review shortlists, and avoid using name or other personal attributes in hiring judgments.
+  </footer>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let state = { candidates: [], jobs: [], job: null, cand: null };
+
+async function api(path, opts) {
+  const r = await fetch('/api' + path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || 'Request failed');
+  return data;
+}
+
+async function loadStatus() {
+  const s = await api('/status');
+  const dot = (on, label) => `<span><span class="${on ? 'text-green-500' : 'text-slate-300'}">●</span> ${label}</span>`;
+  $('status').innerHTML = dot(s.database, 'Database') + dot(s.pdf_processor, 'PDF Processor') +
+    dot(s.ai_pipeline, s.ai_pipeline ? 'AI Pipeline (Claude)' : 'AI Pipeline (local mode)');
+}
+
+function renderCandidates() {
+  $('candCount').textContent = state.candidates.length ? `(${state.candidates.length})` : '';
+  $('candidates').innerHTML = state.candidates.map(c => `
+    <div data-id="${c.id}" class="cand bg-white border rounded-lg p-3 cursor-pointer hover:border-green-400 ${state.cand === c.id ? 'border-green-500 ring-1 ring-green-300' : ''}">
+      <div class="flex justify-between">
+        <div class="font-semibold text-sm truncate">${esc(c.name)}</div>
+        <button data-del="${c.id}" class="text-slate-300 hover:text-red-500 text-xs">✕</button>
+      </div>
+      <div class="text-xs text-slate-500 truncate">${esc(c.filename)} · ${c.years_experience || 0} yrs${c.education ? ' · ' + esc(c.education) : ''}</div>
+      <div class="flex flex-wrap gap-1 mt-2">${c.skills.slice(0, 6).map(s => `<span class="bg-green-50 text-green-700 text-[11px] px-2 py-0.5 rounded">${esc(s)}</span>`).join('')}</div>
+    </div>`).join('') || '<div class="text-sm text-slate-400">No resumes yet.</div>';
+}
+
+function renderJobs() {
+  $('jobs').innerHTML = state.jobs.map(j => `
+    <div data-job="${j.id}" class="job border rounded p-3 cursor-pointer hover:border-green-400 ${state.job?.id === j.id ? 'border-green-500 bg-green-50' : ''}">
+      <div class="flex justify-between"><div class="font-semibold text-sm">${esc(j.title)}</div>
+        <button data-deljob="${j.id}" class="text-slate-300 hover:text-red-500 text-xs">✕</button></div>
+      <div class="text-xs text-slate-500">${j.min_experience || 0}+ yrs · ${j.required_skills.map(esc).join(', ') || 'no skills detected'}</div>
+    </div>`).join('') || '<div class="text-sm text-slate-400">No jobs yet.</div>';
+}
+
+function bar(label, v) {
+  return `<div class="flex items-center gap-2 text-[11px] text-slate-500"><span class="w-14">${label}</span>
+    <div class="flex-1 h-1.5 bg-slate-100 rounded"><div class="h-1.5 bg-green-500 rounded" style="width:${v}%"></div></div><span class="w-8 text-right">${Math.round(v)}</span></div>`;
+}
+
+function renderMatches(list) {
+  $('matches').innerHTML = list.map((m, i) => `
+    <div data-mc="${m.candidate_id}" class="match bg-white border rounded-lg p-4 cursor-pointer ${state.cand === m.candidate_id ? 'border-green-500' : ''}">
+      <div class="flex items-center justify-between">
+        <div><span class="text-slate-400 text-sm mr-2">#${i + 1}</span><span class="font-semibold">${esc(m.name)}</span>
+          <span class="text-xs text-slate-500 ml-2">${esc(m.email || '')}</span></div>
+        <div class="text-2xl font-bold ${m.score >= 70 ? 'text-green-600' : m.score >= 40 ? 'text-amber-500' : 'text-slate-400'}">${m.score}</div>
+      </div>
+      <div class="mt-2 space-y-1">${bar('Skills', m.skill_score)}${bar('Content', m.text_score)}${bar('Exp.', m.exp_score)}</div>
+      <div class="flex flex-wrap gap-1 mt-3">
+        ${m.matched_skills.map(s => `<span class="bg-green-50 text-green-700 text-[11px] px-2 py-0.5 rounded">✓ ${esc(s)}</span>`).join('')}
+        ${m.missing_skills.map(s => `<span class="bg-red-50 text-red-600 text-[11px] px-2 py-0.5 rounded">✗ ${esc(s)}</span>`).join('')}
+      </div>
+      <p class="text-sm text-slate-600 mt-3">${esc(m.explanation)}</p>
+    </div>`).join('') || '<div class="text-sm text-slate-400 bg-white border rounded-lg p-6">No matches yet — click “Run Matching”.</div>';
+}
+
+function updateCtx() {
+  const c = state.candidates.find(c => c.id === state.cand);
+  $('ctx').textContent = `Job: ${state.job?.title || '—'} · Candidate: ${c?.name || 'none selected (uses top matches)'}`;
+}
+
+async function refresh() {
+  [state.candidates, state.jobs] = await Promise.all([api('/candidates'), api('/jobs')]);
+  renderCandidates(); renderJobs();
+}
+
+async function selectJob(id) {
+  state.job = state.jobs.find(j => j.id === id);
+  $('matchSection').classList.remove('hidden');
+  $('matchJob').textContent = state.job.title;
+  renderJobs(); updateCtx();
+  renderMatches(await api(`/jobs/${id}/matches`));
+}
+
+async function uploadFiles(files) {
+  const msg = $('uploadMsg'); msg.className = 'text-sm mt-3 text-slate-500';
+  const errors = [];
+  for (const f of files) {
+    msg.textContent = `Processing ${f.name}…`;
+    const fd = new FormData(); fd.append('file', f);
+    try { await api('/candidates/upload', { method: 'POST', body: fd }); }
+    catch (e) { errors.push(`${f.name}: ${e.message}`); }
+  }
+  await refresh();
+  msg.className = 'text-sm mt-3 ' + (errors.length ? 'text-red-600' : 'text-green-600');
+  msg.textContent = errors.length ? errors.join(' | ') : `Uploaded ${files.length} resume(s).`;
+}
+
+const drop = $('drop');
+drop.onclick = () => $('file').click();
+$('file').onchange = e => { uploadFiles([...e.target.files]); e.target.value = ''; };
+['dragover', 'dragenter'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('drop-active'); }));
+['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('drop-active'); }));
+drop.addEventListener('drop', e => uploadFiles([...e.dataTransfer.files].filter(f => f.name.toLowerCase().endsWith('.pdf'))));
+
+$('candidates').onclick = async e => {
+  const del = e.target.closest('[data-del]');
+  if (del) { await api('/candidates/' + del.dataset.del, { method: 'DELETE' }); if (state.cand == del.dataset.del) state.cand = null; await refresh(); return; }
+  const card = e.target.closest('.cand');
+  if (card) { state.cand = +card.dataset.id; renderCandidates(); updateCtx(); }
+};
+
+$('jobs').onclick = async e => {
+  const del = e.target.closest('[data-deljob]');
+  if (del) { await api('/jobs/' + del.dataset.deljob, { method: 'DELETE' }); if (state.job?.id == del.dataset.deljob) { state.job = null; $('matchSection').classList.add('hidden'); } await refresh(); return; }
+  const card = e.target.closest('.job');
+  if (card) selectJob(+card.dataset.job);
+};
+
+$('matches').onclick = e => {
+  const m = e.target.closest('.match');
+  if (m) { state.cand = +m.dataset.mc; renderCandidates(); updateCtx(); api(`/jobs/${state.job.id}/matches`).then(renderMatches); }
+};
+
+$('jSave').onclick = async () => {
+  const title = $('jTitle').value.trim(), description = $('jDesc').value.trim();
+  if (!title || !description) return alert('Title and description are required.');
+  const job = await api('/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+    title, description,
+    required_skills: $('jSkills').value.split(',').map(s => s.trim()).filter(Boolean),
+    min_experience: parseFloat($('jExp').value) || 0 }) });
+  ['jTitle', 'jDesc', 'jSkills', 'jExp'].forEach(i => $(i).value = '');
+  await refresh(); selectJob(job.id);
+};
+
+$('runMatch').onclick = async () => {
+  const b = $('runMatch'); b.disabled = true; b.textContent = 'Matching…';
+  try { renderMatches(await api(`/jobs/${state.job.id}/match`, { method: 'POST' })); }
+  catch (e) { alert(e.message); }
+  b.disabled = false; b.textContent = 'Run Matching';
+};
+
+async function ask() {
+  const q = $('q').value.trim(); if (!q || !state.job) return;
+  const log = $('chatLog');
+  log.insertAdjacentHTML('beforeend', `<div class="bg-slate-100 rounded p-2">${esc(q)}</div>`);
+  $('q').value = '';
+  const r = await api('/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question: q, job_id: state.job.id, candidate_id: state.cand }) });
+  log.insertAdjacentHTML('beforeend', `<div class="bg-green-50 rounded p-2">${esc(r.answer)}</div>`);
+  log.scrollTop = log.scrollHeight;
+}
+$('ask').onclick = ask;
+$('q').onkeydown = e => { if (e.key === 'Enter') ask(); };
+
+loadStatus(); refresh();
+</script>
+</body>
+</html>
